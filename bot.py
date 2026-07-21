@@ -3,7 +3,7 @@ import logging
 import time
 from datetime import datetime
 
-from telegram import Bot, InputMediaPhoto
+from telegram import Bot
 from telegram.error import TelegramError
 from telegram.constants import ParseMode
 
@@ -12,17 +12,21 @@ from config import (
     TELEGRAM_CHANNEL_ID,
     CHECK_INTERVAL,
     CONCURRENT_REGIONS,
+    MIN_DATE,
 )
 from db import (
     init_db,
     is_seen,
     mark_seen,
-    mark_seen_batch,
     get_seen_count,
-    save_checkpoint,
-    load_checkpoint,
 )
-from scraper import load_regions, fetch_region_posts, CarPost
+from scraper import (
+    load_regions,
+    fetch_region_posts,
+    fetch_post_description,
+    translate_to_uzbek,
+    CarPost,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,7 +48,17 @@ CAR_TYPE_MAP = {
 }
 
 
+def format_date(published_at: str) -> str:
+    """ISO sana ni o'qilishi qulay formatga o'tkazish."""
+    try:
+        dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return ""
+
+
 def format_message(post: CarPost) -> str:
+    """Telegram uchun xabar formatlash."""
     lines = [f"🚗 <b>{post.title}</b>", ""]
 
     if post.price:
@@ -58,13 +72,50 @@ def format_message(post: CarPost) -> str:
         lines.append(f"🏷 <b>Turi:</b> {label}")
     if post.location:
         lines.append(f"📍 <b>Joylashuv:</b> {post.location} (Koreya)")
+    if post.published_at:
+        lines.append(f"🕐 <b>E'lon sanasi:</b> {format_date(post.published_at)}")
+
+    # O'zbekcha tavsif
+    if post.description_uz:
+        lines.append("")
+        lines.append(f"📝 <b>Tavsif:</b>")
+        lines.append(f"{post.description_uz}")
 
     lines += ["", f'🔗 <a href="{post.post_url}">Daangn\'da ko\'rish →</a>']
     return "\n".join(lines)
 
 
+async def enrich_post(post: CarPost) -> CarPost:
+    """
+    Postga qo'shimcha ma'lumot qo'shish:
+    - 차량 설명 (tavsif) olish
+    - O'zbekchaga tarjima
+    """
+    loop = asyncio.get_event_loop()
+
+    # Tavsifni olish
+    description = await loop.run_in_executor(
+        None, fetch_post_description, post.post_url
+    )
+
+    if description:
+        post.description = description
+        # O'zbekchaga tarjima
+        post.description_uz = await loop.run_in_executor(
+            None, translate_to_uzbek, description
+        )
+
+    return post
+
+
 async def send_post(bot: Bot, post: CarPost) -> bool:
+    """Bitta postni Telegram kanalga yuborish."""
     text = format_message(post)
+
+    # Telegram caption max 1024 belgi
+    if len(text) > 1024:
+        text = text[:1020] + "..."
+
     try:
         if post.image_url:
             await bot.send_photo(
@@ -104,13 +155,11 @@ async def process_region(
     region_name: str,
     semaphore: asyncio.Semaphore,
 ) -> int:
-    """
-    Bitta regionni tekshirish va yangi postlarni yuborish.
-    Semaphore orqali parallel so'rovlar soni cheklanadi.
-    """
+    """Bitta regionni tekshirish va yangi postlarni yuborish."""
     async with semaphore:
         loop = asyncio.get_event_loop()
-        # Scraping — sinxron, thread pool orqali
+
+        # Postlarni olish
         posts = await loop.run_in_executor(
             None, fetch_region_posts, region_id, region_name
         )
@@ -120,39 +169,34 @@ async def process_region(
             if is_seen(post.id):
                 continue
 
+            # Tavsif va tarjima qo'shish
+            post = await enrich_post(post)
+
             success = await send_post(bot, post)
             if success:
                 mark_seen(post.id, post.title, post.price, post.location, post.post_url)
                 sent += 1
-                logger.info(
-                    f"✅ {post.location} | {post.title} | {post.price}"
-                )
-                # Flood limit himoyasi
+                logger.info(f"✅ {post.location} | {post.title} | {post.price}")
                 await asyncio.sleep(2)
 
         return sent
 
 
 async def run_full_scan(bot: Bot, regions: dict) -> int:
-    """
-    Barcha 3847 ta regionni parallel ravishda skanerlash.
-    CONCURRENT_REGIONS ta region bir vaqtda tekshiriladi.
-    """
+    """Barcha 3847 ta regionni parallel skanerlash."""
     semaphore = asyncio.Semaphore(CONCURRENT_REGIONS)
     region_list = list(regions.items())
     total = len(region_list)
     total_sent = 0
 
-    logger.info(f"Skan boshlandi: {total} ta region, {CONCURRENT_REGIONS} parallel")
+    logger.info(f"Skan boshlandi: {total} ta region | MIN_DATE: {MIN_DATE}")
     start_time = time.time()
 
-    # Barcha regionlarni task sifatida yaratish
     tasks = [
         process_region(bot, rid, rname, semaphore)
         for rid, rname in region_list
     ]
 
-    # Natijalarni yig'ish (xatolar bo'lsa ham davom etadi)
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     for r in results:
@@ -163,7 +207,7 @@ async def run_full_scan(bot: Bot, regions: dict) -> int:
     logger.info(
         f"Skan tugadi: {total_sent} ta yangi post | "
         f"Vaqt: {elapsed:.0f}s | "
-        f"Jami ko'rilgan: {get_seen_count()}"
+        f"Jami: {get_seen_count()}"
     )
     return total_sent
 
@@ -187,16 +231,15 @@ async def main():
         logger.error(f"Bot ulanishda xato: {e}")
         return
 
-    # Barcha regionlarni yuklash
     regions = load_regions()
     logger.info(f"Yuklandi: {len(regions)} ta region (butun Koreya)")
     logger.info(f"Kanal: {TELEGRAM_CHANNEL_ID}")
-    logger.info(f"Parallel: {CONCURRENT_REGIONS} ta region bir vaqtda")
+    logger.info(f"Faqat {MIN_DATE} dan keyingi postlar")
 
     # Birinchi skan
     await run_full_scan(bot, regions)
 
-    # Asosiy sikl — har CHECK_INTERVAL sekundda yangi skan
+    # Asosiy sikl
     while True:
         logger.info(f"{CHECK_INTERVAL} sekunddan keyin yangi skan...")
         await asyncio.sleep(CHECK_INTERVAL)
