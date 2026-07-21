@@ -1,17 +1,25 @@
 # ============================================================
-#  MT5 DEMO HISOB KONFIGURATSIYA
+#  GRID TRADING BOT - KONFIGURATSIYA
 # ============================================================
 
-# MetaTrader 5 hisob ma'lumotlari (rasmdan olingan)
+# MT5 hisob ma'lumotlari
 MT5_LOGIN    = 109947762
 MT5_PASSWORD = "-tBfUb3j"
 MT5_SERVER   = "MetaQuotes-Demo"
 
 # Savdo sozlamalari
-SYMBOL           = "XAUUSD"      # Oltin/Dollar
-LOT              = 0.01          # 0.01 lot
-BUY_COUNT        = 10            # 10 ta BUY
-SELL_COUNT       = 10            # 10 ta SELL
-PROFIT_TARGET    = 2.0           # $2 foydada yopish
-CHECK_INTERVAL   = 3             # Har 3 soniyada tekshirish
-MAGIC            = 20240101      # Bot identifikatori
+SYMBOL         = "XAUUSD"
+LOT            = 0.01          # Har bir pozitsiya uchun lot
+MAGIC          = 77777         # Grid bot identifikatori
+
+# Grid sozlamalari
+GRID_STEP      = 20            # Har bir grid oralig'i (point)
+BUY_COUNT      = 6             # BUY pozitsiyalar soni
+SELL_COUNT     = 6             # SELL pozitsiyalar soni
+
+# Foyda/Zarar chegaralari
+PROFIT_TARGET  = 5.0           # $5 foydada hammasi yopiladi
+MAX_LOSS       = -1.5          # -$1.5 bo'lsa ham davom etadi (faqat log)
+
+# Tekshirish oralig'i
+CHECK_INTERVAL = 2             # Har 2 soniyada tekshirish
