@@ -1,138 +1,262 @@
-# ============================================================
-#  BOT ASOSIY MANTIQ
-#  10 BUY + 10 SELL → $2 foydada yopish → takrorlash ♻️
-# ============================================================
+# ================================================================
+#  BOT.PY — ASOSIY BOT MANTIQ
+#  Multi-Timeframe + 8 Indikator + Risk Menejment + News Filter
+#  $1000 kapital | $20-50 kunlik maqsad | 24/7
+# ================================================================
 
 import time
 import logging
-from mt5_trader import MT5Trader
-from config import BUY_COUNT, SELL_COUNT, PROFIT_TARGET, CHECK_INTERVAL
+from datetime import datetime, timezone
+
+import trader
+import risk_manager
+from timeframe_analysis import multi_timeframe_analysis, get_current_session
+from news_filter import is_near_news, check_spread
+from config import (
+    SYMBOL, CHECK_INTERVAL, MAX_POSITIONS,
+    MIN_SIGNALS, DAILY_PROFIT_TARGET, MAX_DAILY_LOSS, BALANCE
+)
+import MetaTrader5 as mt5
 
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
+# ================================================================
 #  BANNER
-# ============================================================
+# ================================================================
 def print_banner():
-    print("=" * 55)
-    print("   🤖 XAUUSD MT5 AVTOMATIK SAVDO BOTI")
-    print(f"   {BUY_COUNT} BUY + {SELL_COUNT} SELL | Maqsad: ${PROFIT_TARGET}")
-    print("=" * 55)
+    print("\n" + "=" * 62)
+    print("   🤖 PROFESSIONAL XAUUSD BOT — Multi-TF + 8 Indikator")
+    print("   💰 Kapital: $1000  |  🎯 Maqsad: $20-50/kun  |  24/7")
+    print("=" * 62)
+    print("   📊 Indikatorlar: EMA · RSI · MACD · Stoch · BB · ATR")
+    print("                   Supertrend · OBV")
+    print("   ⏱️  Timeframlar:  M1 · H1 · D1 · W1")
+    print("   🛡️  Risk:         ATR-SL · Trailing · Kunlik limit")
+    print("   📰 Filter:       News · Spread · Sessiya")
+    print("=" * 62 + "\n")
 
 
-# ============================================================
-#  BOSQICH 1: 10 BUY + 10 SELL OCHISH
-# ============================================================
-def open_all_positions(trader: MT5Trader) -> int:
-    logger.info("=" * 50)
-    logger.info(f"🚀 Yangi sikl | {BUY_COUNT} BUY + {SELL_COUNT} SELL ochamiz...")
-    logger.info("=" * 50)
+# ================================================================
+#  SIGNAL TEKSHIRISH
+# ================================================================
+def check_signal() -> dict:
+    """
+    Barcha filtrlardan o'tib signal tekshirish
+    Returns: {"action": "BUY"/"SELL"/"WAIT", "reason": str, "atr": float}
+    """
 
-    count = 0
+    # 1) Kunlik limit
+    limit = risk_manager.check_daily_limits()
+    if not limit["can_trade"]:
+        return {"action": "WAIT", "reason": limit["reason"], "atr": 0}
 
-    # 10 ta BUY
-    logger.info(f"📈 BUY pozitsiyalar ({BUY_COUNT} ta)...")
-    for i in range(1, BUY_COUNT + 1):
-        result = trader.open_order("buy")
-        if result:
-            count += 1
-            logger.info(f"  [{i}/{BUY_COUNT}] BUY ✅ ticket:{result['ticket']} narx:{result['price']}")
-        else:
-            logger.error(f"  [{i}/{BUY_COUNT}] BUY ❌ xato!")
-        time.sleep(0.3)
+    # 2) Max pozitsiya soni
+    counts = trader.count_positions()
+    if counts["total"] >= MAX_POSITIONS:
+        return {
+            "action": "WAIT",
+            "reason": f"Max pozitsiya: {counts['total']}/{MAX_POSITIONS}",
+            "atr": 0
+        }
 
-    # 10 ta SELL
-    logger.info(f"📉 SELL pozitsiyalar ({SELL_COUNT} ta)...")
-    for i in range(1, SELL_COUNT + 1):
-        result = trader.open_order("sell")
-        if result:
-            count += 1
-            logger.info(f"  [{i}/{SELL_COUNT}] SELL ✅ ticket:{result['ticket']} narx:{result['price']}")
-        else:
-            logger.error(f"  [{i}/{SELL_COUNT}] SELL ❌ xato!")
-        time.sleep(0.3)
+    # 3) News filter
+    news = is_near_news()
+    if news["blocked"]:
+        return {"action": "WAIT", "reason": f"📰 {news['reason']}", "atr": 0}
 
-    logger.info(f"✅ Jami {count}/{BUY_COUNT + SELL_COUNT} pozitsiya ochildi")
-    return count
+    # 4) Spread tekshirish
+    sym_info = mt5.symbol_info(SYMBOL)
+    spread_check = check_spread(sym_info)
+    if not spread_check["ok"]:
+        return {"action": "WAIT", "reason": spread_check["reason"], "atr": 0}
+
+    # 5) Sessiya tekshirish
+    session = get_current_session()
+    if not session["is_trading_time"]:
+        return {
+            "action": "WAIT",
+            "reason": f"Off-hours ({session['session_name']})",
+            "atr": 0
+        }
+
+    # 6) Multi-Timeframe tahlil
+    mtf = multi_timeframe_analysis()
+    signal  = mtf["signal"]
+    conf    = mtf["confidence"]
+    aligned = mtf["trend_aligned"]
+    atr     = mtf["atr"]
+
+    if signal == "NONE":
+        return {
+            "action": "WAIT",
+            "reason": f"Signal yo'q (BUY:{mtf['weighted_buy']:.3f} SELL:{mtf['weighted_sell']:.3f})",
+            "atr": atr
+        }
+
+    # 7) Signal kuchini tekshirish
+    if conf < 0.3:
+        return {
+            "action": "WAIT",
+            "reason": f"Signal kuchsiz: {conf:.3f} < 0.30",
+            "atr": atr
+        }
+
+    # 8) Trend alignment bonus
+    quality = "KUCHLI ✅" if aligned and conf > 0.5 else "O'RTA ⚠️"
+
+    return {
+        "action":    signal,
+        "reason":    f"{signal} | Ishonch: {conf:.3f} | {quality}",
+        "atr":       atr,
+        "confidence": conf,
+        "aligned":   aligned,
+        "mtf":       mtf
+    }
 
 
-# ============================================================
-#  BOSQICH 2: $2 FOYDANI KUTISH VA YOPISH
-# ============================================================
-def wait_and_close(trader: MT5Trader) -> float:
-    logger.info(f"⏳ Foyda kuzatuvi | Maqsad: ${PROFIT_TARGET} | Interval: {CHECK_INTERVAL}s")
+# ================================================================
+#  SAVDO OCHISH
+# ================================================================
+def open_trade(signal: dict) -> bool:
+    """Signal asosida pozitsiya ochish"""
+    direction = signal["action"]
+    atr       = signal["atr"]
 
-    check = 0
-    while True:
-        time.sleep(CHECK_INTERVAL)
-        check += 1
+    if atr <= 0:
+        logger.warning("ATR nol, savdo ochilmadi")
+        return False
 
-        counts = trader.count_positions()
-        if counts["total"] == 0:
-            logger.warning("⚠️  Ochiq pozitsiya yo'q! Yangi sikl boshlanadi...")
-            return 0.0
+    # Lot hisoblash
+    lot = risk_manager.calc_lot(atr)
 
-        pnl = trader.get_total_profit()
+    # Joriy narx
+    tick = trader.get_tick()
+    if tick is None:
+        return False
+
+    entry = tick["ask"] if direction == "BUY" else tick["bid"]
+
+    # SL/TP hisoblash
+    sl_tp = risk_manager.calc_sl_tp(direction, entry, atr)
+
+    # Buyurtma yuborish
+    result = trader.open_order(
+        direction = direction,
+        lot       = lot,
+        sl        = sl_tp["sl"],
+        tp        = sl_tp["tp"],
+        comment   = f"mtf_{direction[:1]}_{int(signal['confidence']*100)}"
+    )
+
+    if result:
         logger.info(
-            f"[#{check}] PnL: {pnl:+.4f}$ | "
-            f"Maqsad: ${PROFIT_TARGET} | "
-            f"Pos: {counts['total']} (B:{counts['buy']} S:{counts['sell']})"
+            f"🎯 SAVDO OCHILDI | {direction} | "
+            f"Lot: {lot} | Entry: {entry:.5f} | "
+            f"SL: {sl_tp['sl']:.5f} | TP: {sl_tp['tp']:.5f} | "
+            f"R:R = 1:{sl_tp['rr_ratio']}"
         )
+        return True
 
-        if pnl >= PROFIT_TARGET:
-            logger.info(f"🎯 MAQSAD! Foyda: ${pnl:.4f} — barcha pozitsiyalar yopilmoqda...")
-            closed = trader.close_all()
-            logger.info(f"✅ {closed} ta pozitsiya yopildi | Foyda: ~${pnl:.4f}")
-            return pnl
+    return False
 
 
-# ============================================================
-#  ASOSIY SIKL
-# ============================================================
+# ================================================================
+#  HOLAT HISOBOTI (har 10 siklda)
+# ================================================================
+def print_status(cycle: int):
+    """Bot holati va statistikani chiqarish"""
+    acc     = trader.get_account_info()
+    counts  = trader.count_positions()
+    pnl     = trader.get_unrealized_pnl()
+    stats   = risk_manager.get_daily_stats()
+    session = get_current_session()
+
+    if acc is None:
+        return
+
+    logger.info("─" * 62)
+    logger.info(
+        f"📊 HOLAT #{cycle} | "
+        f"Balans: {acc['balance']:.2f}$ | "
+        f"Equity: {acc['equity']:.2f}$"
+    )
+    logger.info(
+        f"   Pozitsiyalar: {counts['total']} (B:{counts['buy']} S:{counts['sell']}) | "
+        f"Unrealized: {pnl:+.4f}$"
+    )
+    logger.info(
+        f"   Bugun: Net: {stats['net']:+.4f}$ | "
+        f"Savdolar: {stats['trades']} | "
+        f"Winrate: {stats['winrate']:.0f}%"
+    )
+    logger.info(
+        f"   Sessiya: {session['session_name']} | "
+        f"Vaqt UTC: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"
+    )
+    logger.info("─" * 62)
+
+
+# ================================================================
+#  ASOSIY BOT SIKLI
+# ================================================================
 def run_bot():
+    """Asosiy bot loop — to'xtatilgunga qadar ishlaydi"""
     print_banner()
-    trader = MT5Trader()
 
     # MT5 ga ulanish
     if not trader.connect():
-        logger.error("❌ MT5 ga ulanib bo'lmadi! config.py ni tekshiring.")
+        logger.error("❌ MT5 ga ulanib bo'lmadi! main.py ni qayta ishga tushiring.")
         return
 
-    sikl    = 0
-    jami_pnl = 0.0
+    logger.info("✅ Bot ishga tushdi | Signal kutilmoqda...\n")
+
+    cycle        = 0
+    last_status  = 0
 
     try:
         while True:
-            sikl += 1
-            logger.info(f"\n{'='*55}")
-            logger.info(f"  📊 SIKL #{sikl} | Jami foyda: ${jami_pnl:.4f}")
-            logger.info(f"{'='*55}")
+            cycle += 1
+            now = datetime.now(timezone.utc)
 
-            # 1) Pozitsiyalarni ochish
-            opened = open_all_positions(trader)
-            if opened < (BUY_COUNT + SELL_COUNT) // 2:
-                logger.error("❌ Yetarli pozitsiya ochilmadi! 15s kutib qayta uriniladi...")
-                trader.close_all()
-                time.sleep(15)
-                continue
+            # ── Har 10 siklda holat hisoboti ──
+            if cycle - last_status >= 10:
+                print_status(cycle)
+                last_status = cycle
 
-            # 2) Foyda kutish va yopish
-            profit = wait_and_close(trader)
-            jami_pnl += profit
+            # ── Trailing stop yangilash ──
+            if cycle % 3 == 0:
+                risk_manager.update_trailing_stops()
 
-            logger.info(f"🏁 Sikl #{sikl} tugadi | Foyda: ${profit:.4f} | Jami: ${jami_pnl:.4f}")
-            logger.info("⏸️  3 soniya pauza...")
-            time.sleep(3)
+            # ── Signal tekshirish ──
+            signal = check_signal()
+
+            if signal["action"] in ("BUY", "SELL"):
+                logger.info(f"\n🔔 SIGNAL: {signal['reason']}")
+                success = open_trade(signal)
+                if success:
+                    time.sleep(5)   # Pozitsiya ochilgandan keyin qisqa pauza
+
+            else:
+                # Har 30 siklda WAIT sababini ko'rsat
+                if cycle % 30 == 0:
+                    logger.info(f"⏳ KUTISH: {signal['reason']}")
+
+            # ── CHECK_INTERVAL soniya kutish ──
+            time.sleep(CHECK_INTERVAL)
 
     except KeyboardInterrupt:
         logger.info("\n🛑 Bot to'xtatildi (Ctrl+C)")
         logger.info("Barcha pozitsiyalar yopilmoqda...")
-        trader.close_all()
-        logger.info(f"✅ Tozalandi | Jami foyda: ${jami_pnl:.4f}")
+        result = trader.close_all_positions()
+        stats  = risk_manager.get_daily_stats()
+        logger.info(f"✅ {result['closed']} pozitsiya yopildi | Kunlik net: {stats['net']:+.4f}$")
+
+    except Exception as e:
+        logger.exception(f"❌ Kutilmagan xato: {e}")
+        logger.info("Xavfsizlik uchun barcha pozitsiyalar yopilmoqda...")
+        trader.close_all_positions()
+
     finally:
         trader.disconnect()
-
-
-if __name__ == "__main__":
-    run_bot()
+        logger.info("Bot to'xtatildi. Xayr! 👋")
