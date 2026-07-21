@@ -62,6 +62,28 @@ def get_tick() -> dict | None:
 # ================================================================
 #  BUYURTMA OCHISH (SL/TP bilan)
 # ================================================================
+def _get_filling_mode() -> int:
+    """
+    MT5 server qo'llab-quvvatlaydigan filling modeni aniqlash.
+    MetaQuotes-Demo ko'pincha RETURN yoki IOC ishlatadi.
+    """
+    sym_info = mt5.symbol_info(SYMBOL)
+    if sym_info is None:
+        return mt5.ORDER_FILLING_IOC
+
+    filling_mode = sym_info.filling_mode
+
+    # 1 = FOK, 2 = IOC, 4 = RETURN
+    if filling_mode & 4:    # RETURN — eng keng qo'llab-quvvatlanadigan
+        return mt5.ORDER_FILLING_RETURN
+    elif filling_mode & 2:  # IOC
+        return mt5.ORDER_FILLING_IOC
+    elif filling_mode & 1:  # FOK
+        return mt5.ORDER_FILLING_FOK
+    else:
+        return mt5.ORDER_FILLING_RETURN
+
+
 def open_order(direction: str, lot: float, sl: float, tp: float,
                comment: str = "pro_bot") -> dict | None:
     """
@@ -78,17 +100,33 @@ def open_order(direction: str, lot: float, sl: float, tp: float,
     if sym_info is None:
         return None
 
-    filling = mt5.ORDER_FILLING_IOC
-    # Filling type tekshirish
-    if sym_info.filling_mode & mt5.ORDER_FILLING_FOK:
-        filling = mt5.ORDER_FILLING_FOK
+    # SL/TP nol bo'lmasligi tekshirish
+    if sl <= 0 or tp <= 0:
+        logger.error(f"❌ SL yoki TP nol! SL:{sl} TP:{tp} — savdo ochilmadi")
+        return None
+
+    filling = _get_filling_mode()
 
     if direction.upper() == "BUY":
         order_type = mt5.ORDER_TYPE_BUY
         price      = tick["ask"]
+        # SL narxdan past, TP narxdan yuqori bo'lishi kerak
+        if sl >= price:
+            logger.error(f"❌ BUY SL ({sl}) narxdan ({price}) yuqori!")
+            return None
+        if tp <= price:
+            logger.error(f"❌ BUY TP ({tp}) narxdan ({price}) past!")
+            return None
     else:
         order_type = mt5.ORDER_TYPE_SELL
         price      = tick["bid"]
+        # SL narxdan yuqori, TP narxdan past bo'lishi kerak
+        if sl <= price:
+            logger.error(f"❌ SELL SL ({sl}) narxdan ({price}) past!")
+            return None
+        if tp >= price:
+            logger.error(f"❌ SELL TP ({tp}) narxdan ({price}) yuqori!")
+            return None
 
     request = {
         "action":       mt5.TRADE_ACTION_DEAL,
@@ -98,7 +136,7 @@ def open_order(direction: str, lot: float, sl: float, tp: float,
         "price":        price,
         "sl":           float(sl),
         "tp":           float(tp),
-        "deviation":    30,
+        "deviation":    50,
         "magic":        MAGIC,
         "comment":      comment[:31],
         "type_time":    mt5.ORDER_TIME_GTC,
@@ -116,7 +154,15 @@ def open_order(direction: str, lot: float, sl: float, tp: float,
             f"❌ {direction} xato | retcode: {result.retcode} | "
             f"comment: {result.comment}"
         )
-        return None
+        # Agar filling xatosi bo'lsa RETURN bilan qayta urinish
+        if result.retcode == 10030:
+            logger.info("🔄 Filling xatosi, RETURN bilan qayta urinilmoqda...")
+            request["type_filling"] = mt5.ORDER_FILLING_RETURN
+            result = mt5.order_send(request)
+            if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+                return None
+        else:
+            return None
 
     logger.info(
         f"✅ {direction} ochildi | "
@@ -145,10 +191,7 @@ def close_position(position) -> dict:
     if tick is None:
         return {"success": False, "profit": 0}
 
-    sym_info = mt5.symbol_info(SYMBOL)
-    filling = mt5.ORDER_FILLING_IOC
-    if sym_info and sym_info.filling_mode & mt5.ORDER_FILLING_FOK:
-        filling = mt5.ORDER_FILLING_FOK
+    filling = _get_filling_mode()
 
     if position.type == mt5.ORDER_TYPE_BUY:
         order_type = mt5.ORDER_TYPE_SELL

@@ -157,11 +157,34 @@ def calc_sl_tp(direction: str, entry_price: float, atr: float) -> dict:
     BUY:  SL = entry - ATR*1.5  |  TP = entry + ATR*3.0
     SELL: SL = entry + ATR*1.5  |  TP = entry - ATR*3.0
     """
+    sym_info = mt5.symbol_info(SYMBOL)
+    digits   = sym_info.digits if sym_info else 2
+
+    # ATR 0 yoki juda kichik bo'lsa — H1 dan hisoblash
+    if atr <= 0:
+        logger.warning("⚠️  ATR 0! H1 dan qayta hisoblanmoqda...")
+        rates = mt5.copy_rates_from_pos(SYMBOL, mt5.TIMEFRAME_H1, 0, 20)
+        if rates is not None and len(rates) >= 15:
+            tr_list = [
+                max(rates["high"][i] - rates["low"][i],
+                    abs(rates["high"][i] - rates["close"][i-1]),
+                    abs(rates["low"][i]  - rates["close"][i-1]))
+                for i in range(1, len(rates))
+            ]
+            atr = sum(tr_list[-14:]) / 14
+        else:
+            # Oxirgi chora: narxning 0.5% ini ishlatish
+            atr = entry_price * 0.005
+        logger.info(f"   Yangi ATR: {atr:.5f}")
+
     sl_dist = atr * ATR_SL_MULT
     tp_dist = atr * ATR_TP_MULT
 
-    sym_info = mt5.symbol_info(SYMBOL)
-    digits = sym_info.digits if sym_info else 5
+    # Minimal SL/TP masofasi (spread dan kam bo'lmasin)
+    if sym_info:
+        min_dist = sym_info.spread * sym_info.point * 3
+        sl_dist  = max(sl_dist, min_dist)
+        tp_dist  = max(tp_dist, min_dist * 2)
 
     if direction == "BUY":
         sl = round(entry_price - sl_dist, digits)
@@ -170,9 +193,11 @@ def calc_sl_tp(direction: str, entry_price: float, atr: float) -> dict:
         sl = round(entry_price + sl_dist, digits)
         tp = round(entry_price - tp_dist, digits)
 
-    logger.debug(
-        f"SL/TP | {direction} | Entry: {entry_price} | "
-        f"SL: {sl} ({sl_dist:.5f}) | TP: {tp} ({tp_dist:.5f})"
+    logger.info(
+        f"📐 SL/TP | {direction} | Entry: {entry_price:.5f} | "
+        f"SL: {sl:.5f} (−{sl_dist:.5f}) | "
+        f"TP: {tp:.5f} (+{tp_dist:.5f}) | "
+        f"R:R = 1:{round(tp_dist/sl_dist, 1) if sl_dist > 0 else 0}"
     )
 
     return {
