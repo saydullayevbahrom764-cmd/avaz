@@ -6,6 +6,7 @@ from datetime import datetime
 from telegram import Bot
 from telegram.error import TelegramError
 from telegram.constants import ParseMode
+from telegram.request import HTTPXRequest
 
 from config import (
     TELEGRAM_BOT_TOKEN,
@@ -80,6 +81,7 @@ def format_message(post: CarPost) -> str:
         lines.append("")
         lines.append(f"📝 <b>Tavsif:</b>")
         lines.append(f"{post.description_uz}")
+        lines.append(f"<i>⚠️ Tarjima avtomatik — xatolik bo'lishi mumkin</i>")
 
     lines += ["", f'🔗 <a href="{post.post_url}">Daangn\'da ko\'rish →</a>']
     return "\n".join(lines)
@@ -222,7 +224,15 @@ async def main():
 
     init_db()
 
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    # Pool timeout muammosini hal qilish uchun connection pool oshirildi
+    request = HTTPXRequest(
+        connection_pool_size=20,
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=30,
+        pool_timeout=60,
+    )
+    bot = Bot(token=TELEGRAM_BOT_TOKEN, request=request)
 
     try:
         me = await bot.get_me()

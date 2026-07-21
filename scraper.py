@@ -186,7 +186,11 @@ def _parse_item(item: dict) -> Optional[CarPost]:
     title = item.get("title", "Nomsiz")
 
     price_raw = item.get("price", 0)
-    price = f"{price_raw:,}만원" if price_raw else "Narx ko'rsatilmagan"
+    if price_raw:
+        price_won = price_raw * 10000  # 만원 → 원 ga aylantirish
+        price = f"{price_raw:,}만원  ({price_won:,} 원)"
+    else:
+        price = "Narx ko'rsatilmagan"
 
     car_data = item.get("carData", {})
     year = car_data.get("modelYear", 0)
