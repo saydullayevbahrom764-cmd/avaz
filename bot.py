@@ -150,7 +150,22 @@ async def process_region(
                 continue
 
             if first_scan:
-                # 1-skan: faqat DB ga saqla, yuborma
+                # 1-skan: oxirgi 3 soatdagi postlarni yuborish, eskisini faqat saqlash
+                from datetime import timedelta
+                try:
+                    post_date = datetime.fromisoformat(post.published_at.replace("Z", "+00:00"))
+                    three_hours_ago = datetime.now(timezone.utc) - timedelta(hours=3)
+                    if post_date >= three_hours_ago:
+                        # Yangi post — yuborish
+                        post = await enrich_post(post)
+                        if await send_post(bot, post):
+                            mark_seen(post.id, post.title, post.price, post.location, post.post_url)
+                            sent += 1
+                            logger.info(f"✅ [1-skan] {post.location} | {post.title} | {post.price}")
+                            await asyncio.sleep(2)
+                        continue
+                except Exception:
+                    pass
                 mark_seen_no_send(
                     post.id, post.title, post.price, post.location, post.post_url
                 )
