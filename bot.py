@@ -67,10 +67,8 @@ def format_message(post: CarPost) -> str:
         lines.append(f"🏷 <b>Turi:</b> {CAR_TYPE_MAP.get(post.car_type, post.car_type)}")
     if post.location:
         lines.append(f"📍 <b>Joylashuv:</b> {post.location} (Koreya)")
-    if post.description_uz:
-        lines.append(f"\n📝 {post.description_uz}")
-        lines.append(f"<i>⚠️ Tarjima avtomatik</i>")
 
+    # Link har doim oxirida
     lines.append(f'\n🔗 <a href="{post.post_url}">Daangn\'da ko\'rish →</a>')
     return "\n".join(lines)
 
@@ -85,20 +83,17 @@ async def enrich_post(post: CarPost) -> CarPost:
 
 async def send_post(bot: Bot, post: CarPost) -> bool:
     text = format_message(post)
+    # Caption max 1024 belgi
+    if len(text) > 1024:
+        text = text[:1020] + "..."
 
     try:
         if post.image_url:
-            # Avval rasm yuboramiz
             await bot.send_photo(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 photo=post.image_url,
-            )
-            # Keyin matn + link yuboramiz (link har doim ishlaydi)
-            await bot.send_message(
-                chat_id=TELEGRAM_CHANNEL_ID,
-                text=text,
+                caption=text,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
             )
         else:
             await bot.send_message(
