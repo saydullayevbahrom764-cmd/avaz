@@ -55,7 +55,6 @@ def format_date(published_at: str) -> str:
 
 
 def format_message(post: CarPost) -> str:
-    import urllib.parse
     lines = [f"🚗 <b>{post.title}</b>", ""]
 
     if post.price:
@@ -69,12 +68,6 @@ def format_message(post: CarPost) -> str:
     if post.location:
         lines.append(f"📍 <b>Joylashuv:</b> {post.location} (Koreya)")
 
-    # URL ni to'liq va bosiladigan qilamiz
-    url = post.post_url
-    if not url.startswith("http"):
-        url = "https://www.daangn.com" + url
-
-    lines.append(f'\n🔗 <a href="{url}">Daangn\'da ko\'rish →</a>')
     return "\n".join(lines)
 
 
@@ -87,10 +80,21 @@ async def enrich_post(post: CarPost) -> CarPost:
 
 
 async def send_post(bot: Bot, post: CarPost) -> bool:
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
     text = format_message(post)
-    # Caption max 1024 belgi
     if len(text) > 1024:
         text = text[:1020] + "..."
+
+    # URL to'liq bo'lishini ta'minlash
+    url = post.post_url
+    if not url.startswith("http"):
+        url = "https://www.daangn.com" + url
+
+    # Inline tugma — link sifatida
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔗 Daangn'da ko'rish →", url=url)]
+    ])
 
     try:
         if post.image_url:
@@ -99,12 +103,14 @@ async def send_post(bot: Bot, post: CarPost) -> bool:
                 photo=post.image_url,
                 caption=text,
                 parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
             )
         else:
             await bot.send_message(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 text=text,
                 parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
                 disable_web_page_preview=True,
             )
         return True
@@ -114,6 +120,7 @@ async def send_post(bot: Bot, post: CarPost) -> bool:
                 chat_id=TELEGRAM_CHANNEL_ID,
                 text=text,
                 parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
                 disable_web_page_preview=True,
             )
             return True
