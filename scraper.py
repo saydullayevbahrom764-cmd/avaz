@@ -52,8 +52,6 @@ def set_bot_start_time():
 def is_new_post(published_at: str) -> bool:
     """
     Post bot ishga tushganidan keyin e'lon qilinganmi?
-    Birinchi skanda barcha mavjud postlar DB ga saqlanadi (yuborilmaydi),
-    keyingi skanlardan yangilari yuboriladi.
     """
     if not published_at:
         return False
@@ -61,7 +59,10 @@ def is_new_post(published_at: str) -> bool:
         post_date = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
         if BOT_START_TIME is None:
             return True
-        return post_date >= BOT_START_TIME
+        # Bot start vaqtidan 2 daqiqa oldindan boshlab yangi hisoblaydi
+        from datetime import timedelta
+        threshold = BOT_START_TIME - timedelta(minutes=2)
+        return post_date >= threshold
     except Exception:
         return False
 
