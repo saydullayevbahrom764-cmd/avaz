@@ -150,11 +150,11 @@ async def process_region(
                 continue
 
             if first_scan:
-                # 1-skan: oxirgi 3 soatdagi postlarni yuborish, eskisini faqat saqlash
+                # 1-skan: oxirgi 30 daqiqadagi postlarni yuborish, eskisini faqat saqlash
                 from datetime import timedelta
                 try:
                     post_date = datetime.fromisoformat(post.published_at.replace("Z", "+00:00"))
-                    three_hours_ago = datetime.now(timezone.utc) - timedelta(hours=3)
+                    three_hours_ago = datetime.now(timezone.utc) - timedelta(minutes=30)
                     if post_date >= three_hours_ago:
                         # Yangi post — yuborish
                         post = await enrich_post(post)
