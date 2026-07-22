@@ -87,23 +87,29 @@ async def enrich_post(post: CarPost) -> CarPost:
 
 async def send_post(bot: Bot, post: CarPost) -> bool:
     text = format_message(post)
-    if len(text) > 1024:
-        text = text[:1020] + "..."
+    if len(text) > 4096:
+        text = text[:4090] + "..."
 
     try:
         if post.image_url:
+            # Avval matn + link yuboramiz
+            await bot.send_message(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            # Keyin rasm yuboramiz
             await bot.send_photo(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 photo=post.image_url,
-                caption=text,
-                parse_mode=ParseMode.HTML,
             )
         else:
             await bot.send_message(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 text=text,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=False,
+                disable_web_page_preview=True,
             )
         return True
     except TelegramError as e:
@@ -112,7 +118,7 @@ async def send_post(bot: Bot, post: CarPost) -> bool:
                 chat_id=TELEGRAM_CHANNEL_ID,
                 text=text,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=False,
+                disable_web_page_preview=True,
             )
             return True
         except TelegramError:
