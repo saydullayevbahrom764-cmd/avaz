@@ -12,14 +12,8 @@ def init_db():
             price TEXT,
             region TEXT,
             url TEXT,
+            sent INTEGER DEFAULT 0,
             seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    # Keyingi siklda qayerdan davom etish uchun checkpoint
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS checkpoint (
-            key TEXT PRIMARY KEY,
-            value TEXT
         )
     """)
     conn.commit()
@@ -27,6 +21,7 @@ def init_db():
 
 
 def is_seen(post_id: str) -> bool:
+    """Post avval ko'rilganmi?"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT 1 FROM seen_posts WHERE id=?", (post_id,))
@@ -36,23 +31,24 @@ def is_seen(post_id: str) -> bool:
 
 
 def mark_seen(post_id: str, title: str, price: str, region: str, url: str):
+    """Post yuborildi va ko'rildi deb belgilash."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
-        "INSERT OR IGNORE INTO seen_posts (id, title, price, region, url) VALUES (?,?,?,?,?)",
+        "INSERT OR IGNORE INTO seen_posts (id, title, price, region, url, sent) VALUES (?,?,?,?,?,1)",
         (post_id, title, price, region, url),
     )
     conn.commit()
     conn.close()
 
 
-def mark_seen_batch(posts: list):
-    """Ko'p postni bir vaqtda saqlash (tezroq)."""
+def mark_seen_no_send(post_id: str, title: str, price: str, region: str, url: str):
+    """Post ko'rildi lekin yuborilmadi deb belgilash (birinchi skan)."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.executemany(
-        "INSERT OR IGNORE INTO seen_posts (id, title, price, region, url) VALUES (?,?,?,?,?)",
-        [(p["id"], p["title"], p["price"], p["region"], p["url"]) for p in posts],
+    c.execute(
+        "INSERT OR IGNORE INTO seen_posts (id, title, price, region, url, sent) VALUES (?,?,?,?,?,0)",
+        (post_id, title, price, region, url),
     )
     conn.commit()
     conn.close()
@@ -67,21 +63,11 @@ def get_seen_count() -> int:
     return count
 
 
-def save_checkpoint(region_index: int):
+def get_sent_count() -> int:
+    """Yuborilgan postlar soni."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute(
-        "INSERT OR REPLACE INTO checkpoint (key, value) VALUES ('region_index', ?)",
-        (str(region_index),),
-    )
-    conn.commit()
+    c.execute("SELECT COUNT(*) FROM seen_posts WHERE sent=1")
+    count = c.fetchone()[0]
     conn.close()
-
-
-def load_checkpoint() -> int:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT value FROM checkpoint WHERE key='region_index'")
-    row = c.fetchone()
-    conn.close()
-    return int(row[0]) if row else 0
+    return count

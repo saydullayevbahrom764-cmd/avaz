@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from config import REQUEST_DELAY, MIN_DATE
+from config import REQUEST_DELAY
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,6 @@ HEADERS = {
     "Accept-Language": "ko-KR,ko;q=0.9",
 }
 
-# 차량 설명 (mashina tavsifi) olish uchun detail endpoint
 DETAIL_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -38,6 +37,33 @@ DETAIL_HEADERS = {
     "Referer": "https://www.daangn.com/",
     "Accept-Language": "ko-KR,ko;q=0.9",
 }
+
+# Bot ishga tushgan vaqt — shu vaqtdan oldingi postlar yuborilmaydi
+BOT_START_TIME: Optional[datetime] = None
+
+
+def set_bot_start_time():
+    """Bot ishga tushgan vaqtni belgilash."""
+    global BOT_START_TIME
+    BOT_START_TIME = datetime.now(timezone.utc)
+    logger.info(f"Bot start vaqti: {BOT_START_TIME.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+
+def is_new_post(published_at: str) -> bool:
+    """
+    Post bot ishga tushganidan keyin e'lon qilinganmi?
+    Birinchi skanda barcha mavjud postlar DB ga saqlanadi (yuborilmaydi),
+    keyingi skanlardan yangilari yuboriladi.
+    """
+    if not published_at:
+        return False
+    try:
+        post_date = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+        if BOT_START_TIME is None:
+            return True
+        return post_date >= BOT_START_TIME
+    except Exception:
+        return False
 
 
 @dataclass
@@ -53,8 +79,8 @@ class CarPost:
     car_type: str = ""
     status: str = ""
     published_at: str = ""
-    description: str = ""          # Koreyscha tavsif
-    description_uz: str = ""       # O'zbekcha tarjima
+    description: str = ""
+    description_uz: str = ""
 
 
 def load_regions() -> Dict[str, str]:
@@ -63,37 +89,18 @@ def load_regions() -> Dict[str, str]:
         return json.load(f)
 
 
-def is_after_min_date(published_at: str) -> bool:
-    """
-    Post MIN_DATE (2026-07-21) dan keyin e'lon qilinganmi?
-    published_at format: "2026-07-21T06:00:00.278Z"
-    """
-    if not published_at:
-        return False
-    try:
-        # ISO format parse
-        post_date = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
-        min_date = datetime.fromisoformat(MIN_DATE + "T00:00:00+00:00")
-        return post_date >= min_date
-    except Exception:
-        return False
-
-
 def translate_to_uzbek(text: str) -> str:
-    """
-    Koreyscha matnni o'zbekchaga Google Translate orqali tarjima qilish.
-    Bepul, API key shart emas.
-    """
+    """Koreyscha matnni o'zbekchaga Google Translate orqali tarjima."""
     if not text or len(text.strip()) < 5:
         return ""
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {
             "client": "gtx",
-            "sl": "ko",        # Manba: Koreyscha
-            "tl": "uz",        # Maqsad: O'zbekcha
+            "sl": "ko",
+            "tl": "uz",
             "dt": "t",
-            "q": text[:500],   # Max 500 belgi
+            "q": text[:500],
         }
         resp = requests.get(url, params=params, timeout=8)
         if resp.status_code == 200:
@@ -109,21 +116,14 @@ def translate_to_uzbek(text: str) -> str:
 
 
 def fetch_post_description(post_url: str) -> str:
-    """
-    Post detail sahifasidan 차량 설명 (mashina tavsifi) olish.
-    """
+    """Post detail sahifasidan 차량 설명 olish."""
     try:
-        # Detail API endpoint
         slug = post_url.rstrip("/").split("/")[-1]
         detail_url = f"https://www.daangn.com/kr/cars/{slug}/?_data=routes%2Fkr.cars.%24carId"
-        
         resp = requests.get(detail_url, headers=DETAIL_HEADERS, timeout=10)
         if resp.status_code != 200:
             return ""
-        
         data = resp.json()
-        
-        # Turli joylarda tavsif bo'lishi mumkin
         car_post = data.get("carPost", {})
         description = (
             car_post.get("description", "") or
@@ -138,14 +138,9 @@ def fetch_post_description(post_url: str) -> str:
 
 
 def fetch_region_posts(region_id: str, region_name: str) -> List[CarPost]:
-    """
-    Bitta region uchun ON_SALE va MIN_DATE dan keyingi postlarni olish.
-    """
+    """Bitta region uchun ON_SALE postlarni olish."""
     in_param = urllib.parse.quote(f"{region_name}-{region_id}")
-    url = (
-        f"{API_BASE}?in={in_param}"
-        f"&_data=routes%2Fkr.cars._index"
-    )
+    url = f"{API_BASE}?in={in_param}&_data=routes%2Fkr.cars._index"
 
     try:
         resp = requests.get(url, headers=HEADERS, timeout=12)
@@ -160,15 +155,8 @@ def fetch_region_posts(region_id: str, region_name: str) -> List[CarPost]:
     posts = []
 
     for item in raw_posts:
-        # Faqat sotuvdagi postlar
         if item.get("status") != "ON_SALE":
             continue
-
-        # Faqat MIN_DATE dan keyingi postlar
-        published_at = item.get("publishedAt", "")
-        if not is_after_min_date(published_at):
-            continue
-
         post = _parse_item(item)
         if post:
             posts.append(post)
@@ -187,7 +175,7 @@ def _parse_item(item: dict) -> Optional[CarPost]:
 
     price_raw = item.get("price", 0)
     if price_raw:
-        price_won = price_raw * 10000  # 만원 → 원 ga aylantirish
+        price_won = price_raw * 10000
         price = f"{price_raw:,}만원  ({price_won:,} 원)"
     else:
         price = "Narx ko'rsatilmagan"
