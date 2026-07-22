@@ -55,6 +55,7 @@ def format_date(published_at: str) -> str:
 
 
 def format_message(post: CarPost) -> str:
+    import urllib.parse
     lines = [f"🚗 <b>{post.title}</b>", ""]
 
     if post.price:
@@ -68,8 +69,12 @@ def format_message(post: CarPost) -> str:
     if post.location:
         lines.append(f"📍 <b>Joylashuv:</b> {post.location} (Koreya)")
 
-    # Link — to'g'ridan-to'g'ri URL (har doim ko'rinadi va bosiladi)
-    lines.append(f"\n🔗 {post.post_url}")
+    # URL ni to'liq va bosiladigan qilamiz
+    url = post.post_url
+    if not url.startswith("http"):
+        url = "https://www.daangn.com" + url
+
+    lines.append(f'\n🔗 <a href="{url}">Daangn\'da ko\'rish →</a>')
     return "\n".join(lines)
 
 
