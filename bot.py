@@ -68,8 +68,8 @@ def format_message(post: CarPost) -> str:
     if post.location:
         lines.append(f"📍 <b>Joylashuv:</b> {post.location} (Koreya)")
 
-    # Link har doim oxirida
-    lines.append(f'\n🔗 <a href="{post.post_url}">Daangn\'da ko\'rish →</a>')
+    # Link — to'g'ridan-to'g'ri URL (har doim ko'rinadi va bosiladi)
+    lines.append(f"\n🔗 {post.post_url}")
     return "\n".join(lines)
 
 
