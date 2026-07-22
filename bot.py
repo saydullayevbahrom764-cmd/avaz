@@ -85,17 +85,20 @@ async def enrich_post(post: CarPost) -> CarPost:
 
 async def send_post(bot: Bot, post: CarPost) -> bool:
     text = format_message(post)
-    if len(text) > 1024:
-        text = text[:1020] + "..."
 
     try:
         if post.image_url:
-            # Rasm + caption (matn va link pastda)
+            # Avval rasm yuboramiz
             await bot.send_photo(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 photo=post.image_url,
-                caption=text,
+            )
+            # Keyin matn + link yuboramiz (link har doim ishlaydi)
+            await bot.send_message(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                text=text,
                 parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
             )
         else:
             await bot.send_message(
